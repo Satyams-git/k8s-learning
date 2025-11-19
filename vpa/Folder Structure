@@ -1,0 +1,30 @@
+vpa-lab/
+ ├── theory/
+ │    ├── vpa-theory.md
+ │
+ ├── metrics-server/
+ │    ├── install-metrics-server.md
+ │    ├── metrics-server-patch.yml
+ │
+ ├── vpa/
+ │    ├── vpa-install.md
+ │    ├── vpa-up.yaml
+ │    ├── vpa.yml
+ │
+ ├── namespaces/
+ │    ├── notes-namespace.yml
+ │    ├── load-namespace.yml
+ │
+ ├── notes-app/
+ │    ├── notes-app.yml
+ │    ├── notes-service.yml
+ │
+ ├── load-generator/
+ │    ├── load-generator.yml
+ │    ├── stress-load.yml
+ │
+ ├── scripts/
+ │    ├── apply-all.sh
+ │    ├── delete-all.sh
+ │
+ └── README.md
