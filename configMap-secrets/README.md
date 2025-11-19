@@ -1,4 +1,5 @@
 
+---
 
 # README
 
@@ -61,26 +62,43 @@ kubectl get svc -n mysql
 
 ---
 
-# 6. Pod and Logs
+# 6. Verify Pod and Logs
+
+Check pod status:
 
 ```
 kubectl get pods -n mysql
+```
+
+Describe pod:
+
+```
 kubectl describe pod <pod-name> -n mysql
+```
+
+Check logs:
+
+```
 kubectl logs <pod-name> -n mysql
+```
+
+Follow live logs:
+
+```
 kubectl logs -f <pod-name> -n mysql
 ```
 
 ---
 
-# 7. Connect to MySQL
+# 7. Exec Into MySQL Container
 
-Get pod:
+Get pod name:
 
 ```
 kubectl get pods -n mysql
 ```
 
-Open MySQL shell:
+Enter MySQL shell:
 
 ```
 kubectl exec -it -n mysql <pod-name> -- mysql -u root -p
@@ -92,35 +110,58 @@ Password:
 Admin123
 ```
 
+---
+
+# 8. Run SQL Commands
+
 Inside MySQL:
 
 ```
 SHOW DATABASES;
 USE myDB;
+
 CREATE TABLE employees (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(50),
   role VARCHAR(50),
   salary INT
 );
-INSERT INTO employees (name, role, salary) VALUES ('Satyam','DevOps Trainer',90000);
+
+INSERT INTO employees (name, role, salary)
+VALUES
+('Satyam', 'DevOps Trainer', 90000),
+('Rohan', 'DevOps Engineer', 80000),
+('Rohit', 'DevOps Engineer', 95000);
+
 SELECT * FROM employees;
+```
+
+Exit MySQL:
+
+```
 EXIT;
 ```
 
 ---
 
-# 8. Verify Environment Variables
+# 9. Verify Environment Variables in Pod
 
 ```
 kubectl exec -it -n mysql $(kubectl get pod -n mysql -o name) -- env | grep MYSQL
 ```
 
+Expected:
+
+```
+MYSQL_DATABASE=myDB
+MYSQL_ROOT_PASSWORD=Admin123
+```
+
 ---
 
-# 9. Apply All Files
+# 10. Apply All Files
 
-One by one:
+Individually:
 
 ```
 kubectl apply -f namespace.yml
@@ -130,7 +171,7 @@ kubectl apply -f deployment.yml
 kubectl apply -f service.yml
 ```
 
-Or all at once:
+Apply all at once:
 
 ```
 kubectl apply -f .
@@ -138,11 +179,10 @@ kubectl apply -f .
 
 ---
 
-# 10. Cleanup
+# 11. Cleanup
 
 ```
 kubectl delete ns mysql
 ```
 
 ---
-
