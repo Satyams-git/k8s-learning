@@ -1,0 +1,375 @@
+
+
+# ======================================================
+
+# 1. YAML FILES (FULL HPA PROJECT)
+
+# ======================================================
+
+Create this folder structure:
+
+```
+hpa-lab/
+ ├── metrics-server-patch.yml
+ ├── notes-namespace.yml
+ ├── notes-app.yml
+ ├── notes-service.yml
+ ├── hpa.yml
+ ├── load-generator.yml
+ ├── apply-all.sh
+ ├── delete-all.sh
+ ├── README.md
+```
+
+---
+
+# ----------------------------------------------
+
+# File 1: metrics-server-patch.yml
+
+# (Fix for KIND/Local clusters)
+
+# ----------------------------------------------
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-server
+  namespace: kube-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: metrics-server
+        args:
+          - --cert-dir=/tmp
+          - --secure-port=4443
+          - --kubelet-insecure-tls
+          - --kubelet-preferred-address-types=InternalIP,Hostname,ExternalIP
+```
+
+Apply after installing metrics server.
+
+---
+
+# ----------------------------------------------
+
+# File 2: notes-namespace.yml
+
+# ----------------------------------------------
+
+```
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: notes-ns
+```
+
+---
+
+# ----------------------------------------------
+
+# File 3: notes-app.yml
+
+# PHP-Apache sample application with CPU requests/limits
+
+# ----------------------------------------------
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notes-app
+  namespace: notes-ns
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notes-app
+  template:
+    metadata:
+      labels:
+        app: notes-app
+    spec:
+      containers:
+      - name: notes-app
+        image: php:7.4-apache
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+          limits:
+            cpu: "200m"
+```
+
+---
+
+# ----------------------------------------------
+
+# File 4: notes-service.yml
+
+# ----------------------------------------------
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: notes-svc
+  namespace: notes-ns
+spec:
+  selector:
+    app: notes-app
+  ports:
+    - port: 82
+      targetPort: 80
+  type: ClusterIP
+```
+
+---
+
+# ----------------------------------------------
+
+# File 5: hpa.yml
+
+# (Horizontal Pod Autoscaler)
+
+# ----------------------------------------------
+
+```
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notes-hpa
+  namespace: notes-ns
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notes-app
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 2
+```
+
+---
+
+# ----------------------------------------------
+
+# File 6: load-generator.yml
+
+# (BusyBox load generator)
+
+# ----------------------------------------------
+
+```
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: load-ns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: load-ns
+  labels:
+    app: load-generator
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: load-generator
+  template:
+    metadata:
+      labels:
+        app: load-generator
+    spec:
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["/bin/sh", "-c"]
+        args:
+          - >
+            while true;
+            do wget -q -O- http://notes-svc.notes-ns.svc.cluster.local:82 > /dev/null;
+            sleep 0.2;
+            done;
+```
+
+---
+
+# ======================================================
+
+# 2. SCRIPTS
+
+# ======================================================
+
+---
+
+## apply-all.sh
+
+```
+#!/bin/bash
+kubectl apply -f notes-namespace.yml
+kubectl apply -f notes-app.yml
+kubectl apply -f notes-service.yml
+kubectl apply -f hpa.yml
+kubectl apply -f load-generator.yml
+```
+
+---
+
+## delete-all.sh
+
+```
+#!/bin/bash
+kubectl delete -f hpa.yml
+kubectl delete -f notes-service.yml
+kubectl delete -f notes-app.yml
+kubectl delete -f load-generator.yml
+kubectl delete namespace notes-ns
+kubectl delete namespace load-ns
+```
+
+---
+
+# ======================================================
+
+# 3. README.md (CLEAN, COMMAND-ONLY GUIDE)
+
+# ======================================================
+
+Below is the classroom-ready README.
+
+---
+
+# README
+
+## Kubernetes Horizontal Pod Autoscaler (HPA) Hands-On Guide
+
+---
+
+## 1. Install Metrics Server
+
+```
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+Patch (for KIND/Minikube):
+
+```
+kubectl apply -f metrics-server-patch.yml
+```
+
+Verify:
+
+```
+kubectl top nodes
+kubectl top pods -A
+```
+
+---
+
+## 2. Create Namespace
+
+```
+kubectl apply -f notes-namespace.yml
+kubectl get ns
+```
+
+---
+
+## 3. Deploy Notes App
+
+```
+kubectl apply -f notes-app.yml
+kubectl get deploy -n notes-ns
+kubectl get pods -n notes-ns -o wide
+```
+
+---
+
+## 4. Create Service
+
+```
+kubectl apply -f notes-service.yml
+kubectl get svc -n notes-ns
+```
+
+---
+
+## 5. Create HPA
+
+```
+kubectl apply -f hpa.yml
+kubectl get hpa -n notes-ns
+```
+
+---
+
+## 6. Expose App for Testing
+
+```
+kubectl port-forward -n notes-ns svc/notes-svc 8080:82 --address=0.0.0.0
+```
+
+Open:
+
+```
+http://localhost:8080
+```
+
+---
+
+## 7. Deploy Load Generator
+
+```
+kubectl apply -f load-generator.yml
+kubectl get pods -n load-ns
+```
+
+---
+
+## 8. Observe Scaling
+
+```
+watch -n 5 kubectl get hpa,pods -n notes-ns
+```
+
+View CPU:
+
+```
+kubectl top pods -n notes-ns
+```
+
+---
+
+## 9. Cleanup
+
+```
+./delete-all.sh
+```
+
+OR manually:
+
+```
+kubectl delete ns notes-ns
+kubectl delete ns load-ns
+```
+
+---
+
+# ======================================================
+
+# READY FOR PACKAGING
+
+# ======================================================
+
