@@ -182,5 +182,3 @@ sudo rm -rf /mnt/data/mysql
 ---
 
 
-
-Tell me which one you want.
