@@ -61,11 +61,30 @@ sudo mv ./kind /usr/local/bin/kind
 kind --version
 
 Step 7: Install kubectl (official stable release)
+Install kubectl binary with curl on Linux
+Download the latest release with the command:
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 
-curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+Validate the binary (optional)
+Download the kubectl checksum file:
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
+
+Validate the kubectl binary against the checksum file:
+echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+
+If valid, the output is:
+kubectl: OK
+
+Install kubectl
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+Note:
+If you do not have root access on the target system, you can still install kubectl to the ~/.local/bin directory:
+
 chmod +x kubectl
-sudo mv kubectl /usr/local/bin/
-kubectl version --client --short
+mkdir -p ~/.local/bin
+mv ./kubectl ~/.local/bin/kubectl
+# and then append (or prepend) ~/.local/bin to $PATH
 
 Step 8: Verify Setup
 
