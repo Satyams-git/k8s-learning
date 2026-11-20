@@ -1,0 +1,6 @@
+# Overrides for the Bitnami nginx chart (only what differs from the defaults)
+replicaCount: 2
+service:
+  type: NodePort
+  nodePorts:
+    http: 30081

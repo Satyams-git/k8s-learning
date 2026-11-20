@@ -1,0 +1,54 @@
+# Run after:  kubectl taint node <node> dedicated=gpu:NoSchedule
+# gpu-app tolerates the taint AND requires the gpu node (toleration alone only ALLOWS, it does not ATTRACT)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-app
+  namespace: sched-ns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gpu-app
+  template:
+    metadata:
+      labels:
+        app: gpu-app
+    spec:
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: gpu
+        effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - gpu
+      containers:
+      - name: nginx
+        image: nginx:1.27
+---
+# normal-app has no toleration: it can never land on the tainted node
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: normal-app
+  namespace: sched-ns
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: normal-app
+  template:
+    metadata:
+      labels:
+        app: normal-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27

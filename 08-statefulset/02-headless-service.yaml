@@ -1,0 +1,15 @@
+# Headless Service (clusterIP: None): no single virtual IP.
+# DNS returns each Pod's IP and gives each Pod a stable name:
+#   mysql-0.mysql-headless.stateful-ns.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-headless
+  namespace: stateful-ns
+spec:
+  clusterIP: None
+  selector:
+    app: mysql
+  ports:
+  - name: mysql
+    port: 3306

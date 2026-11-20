@@ -1,0 +1,6 @@
+# Run only on nodes labelled disk=ssd
+spec:
+  template:
+    spec:
+      nodeSelector:
+        disk: ssd

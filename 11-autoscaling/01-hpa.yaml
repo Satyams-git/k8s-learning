@@ -1,0 +1,23 @@
+# HPA for the Notes app from Module 4 (../04-services/02-notes-app.yaml)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notes-hpa
+  namespace: notes-ns
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: notes-app
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 10     # low on purpose so the demo scales quickly; 60-80 is typical
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60   # default is 300; shorter so the class sees scale-down

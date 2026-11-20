@@ -1,0 +1,75 @@
+# Two small apps that make routing visible:
+#  frontend: http-echo replies "Welcome to Frontend"
+#  backend : whoami replies with the request details, including the path it received
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nginx-ns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: nginx-ns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: hashicorp/http-echo:1.0
+        args:
+        - "-text=Welcome to Frontend"
+        ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-svc
+  namespace: nginx-ns
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 5678
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: nginx-ns
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: traefik/whoami:v1.10
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-svc
+  namespace: nginx-ns
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 81
+    targetPort: 80

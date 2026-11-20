@@ -1,0 +1,14 @@
+{{ .Chart.Name }} installed as release "{{ .Release.Name }}" (revision {{ .Release.Revision }}).
+
+Replicas: {{ .Values.replicaCount }} | Service: {{ .Values.service.type }} on port {{ .Values.service.port }}
+{{- if eq .Values.service.type "NodePort" }}
+
+Open in browser: http://<node-ip>:{{ .Values.service.nodePort }}
+{{- else }}
+
+Open in browser:
+  kubectl port-forward svc/{{ .Release.Name }} -n {{ .Release.Namespace }} 8082:{{ .Values.service.port }} --address=0.0.0.0
+  then http://<node-ip>:8082
+{{- end }}
+
+Run tests: helm test {{ .Release.Name }} -n {{ .Release.Namespace }}

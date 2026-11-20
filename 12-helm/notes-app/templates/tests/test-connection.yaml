@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-test
+  labels:
+    {{- include "notes-app.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  containers:
+  - name: wget
+    image: busybox:1.36
+    command: ["wget", "-q", "-O-", "http://{{ .Release.Name }}:{{ .Values.service.port }}"]

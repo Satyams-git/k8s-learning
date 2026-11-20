@@ -1,0 +1,10 @@
+# Traefik Middleware: remove the /api prefix before the request reaches the backend
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-api
+  namespace: nginx-ns
+spec:
+  stripPrefix:
+    prefixes:
+    - /api

@@ -1,0 +1,9 @@
+replicaCount: 1
+
+image:
+  repository: satyamsri/notes-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  port: 82

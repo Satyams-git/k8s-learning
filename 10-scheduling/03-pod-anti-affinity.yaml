@@ -1,0 +1,26 @@
+# Required pod anti-affinity: never two web-spread Pods on the same node
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-spread
+  namespace: sched-ns
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-spread
+  template:
+    metadata:
+      labels:
+        app: web-spread
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: web-spread
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.27

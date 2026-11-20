@@ -1,0 +1,280 @@
+Kubeadm Installation Guide (Updated: Nov 2026)
+==============================================
+
+This guide sets up a Kubernetes cluster (1 master + 2 workers) on AWS EC2 using kubeadm.
+
+Versions used:
+- Kubernetes : v1.36   (v1.29 used earlier is out of support)
+- Calico     : v3.33.0 (v3.26.0 used earlier is old)
+- Runtime    : containerd (from Docker apt repo)
+
+GOLDEN RULES
+- Set the hostname FIRST, install LATER.
+- "kubeadm init" runs ONLY on the master, ONLY once.
+- "kubeadm join" runs ONLY on the workers.
+- Before every command, check the prompt: ubuntu@master / ubuntu@worker-1 / ubuntu@worker-2.
+
+------------------------------------------------------------
+
+PREREQUISITES
+-------------
+- Ubuntu 22.04 or 24.04
+- sudo privileges
+- Internet access
+- t2.medium or higher (master needs at least 2 vCPU and 2 GB RAM)
+- All 3 instances in the same VPC and the same Security Group
+
+------------------------------------------------------------
+
+AWS SETUP: SECURITY GROUP
+-------------------------
+1. EC2 Dashboard -> Network & Security -> Security Groups -> Create Security Group
+   - Name        : Kubernetes-Cluster-SG
+   - Description : Kubernetes cluster nodes
+   - VPC         : default (or the VPC of your instances)
+
+2. Inbound rules (recommended, only 3 rules):
+
+| Type         | Port        | Source                                | Why                                              |
+| ------------ | ----------- | ------------------------------------- | ------------------------------------------------ |
+| All traffic  | All         | Kubernetes-Cluster-SG (the SG itself) | Nodes can talk to each other on every port/protocol |
+| SSH          | 22          | My IP                                 | Your login                                       |
+| Custom TCP   | 30000-32767 | My IP (or 0.0.0.0/0)                  | Open NodePort apps in the browser                |
+
+   Add any port-forward port (e.g. 8080) from My IP if you use port-forward.
+
+   Why "All traffic from the same SG"?
+   Calico sends pod-to-pod traffic as IP-in-IP (IP protocol 4). That is not TCP or UDP,
+   so opening only 179/TCP is not enough: nodes show Ready but pods on different nodes
+   cannot talk. The self-referencing rule allows everything ONLY between machines in this SG.
+
+3. Detailed port list (only if you want individual rules; Source = Kubernetes-Cluster-SG):
+
+| Port        | Protocol   | Node         | Used by                          |
+| ----------- | ---------- | ------------ | -------------------------------- |
+| 6443        | TCP        | Master       | Kubernetes API server            |
+| 2379-2380   | TCP        | Master       | etcd                             |
+| 10250       | TCP        | All          | kubelet API (logs, exec)         |
+| 10257       | TCP        | Master       | kube-controller-manager          |
+| 10259       | TCP        | Master       | kube-scheduler                   |
+| 10256       | TCP        | All          | kube-proxy health check          |
+| 30000-32767 | TCP        | Workers      | NodePort Services                |
+| 179         | TCP        | All          | Calico BGP                       |
+| IP-in-IP    | Protocol 4 | All          | Calico pod traffic (Custom Protocol -> 4) |
+
+   Flannel port 8472/UDP is NOT needed (we use Calico).
+
+4. While launching EC2 instances, select the existing security group: Kubernetes-Cluster-SG.
+
+------------------------------------------------------------
+
+STEP 1: SET HOSTNAME (each machine, different name)
+---------------------------------------------------
+Master:
+   sudo hostnamectl set-hostname master && exec bash
+
+Worker 1:
+   sudo hostnamectl set-hostname worker-1 && exec bash
+
+Worker 2:
+   sudo hostnamectl set-hostname worker-2 && exec bash
+
+Verify on all 3 and note the private IPs:
+   hostname && hostname -I
+
+Why: the node registers in the cluster with the hostname it had at "kubeadm init" / "kubeadm join".
+The name is written into certificates, so it cannot be renamed later.
+
+------------------------------------------------------------
+
+STEP 2: EXECUTE ON ALL NODES (master + workers)
+-----------------------------------------------
+
+2.1 Stop auto-updates (prevents "Unable to acquire the dpkg frontend lock")
+   sudo systemctl disable --now unattended-upgrades
+
+   If you still get the dpkg lock error, wait for it to clear (do NOT delete the lock file):
+   while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do echo "apt busy, wait..."; sleep 5; done; echo "Lock free"
+   sudo dpkg --configure -a
+
+2.2 Disable swap (now and after reboot)
+   sudo swapoff -a && sudo sed -i '/ swap / s/^/#/' /etc/fstab
+
+2.3 Load kernel modules
+   printf 'overlay\nbr_netfilter\n' | sudo tee /etc/modules-load.d/k8s.conf && sudo modprobe overlay && sudo modprobe br_netfilter
+
+2.4 Set sysctl parameters
+   printf 'net.bridge.bridge-nf-call-iptables = 1\nnet.bridge.bridge-nf-call-ip6tables = 1\nnet.ipv4.ip_forward = 1\n' | sudo tee /etc/sysctl.d/k8s.conf && sudo sysctl --system > /dev/null
+
+   Verify:
+   lsmod | grep -E 'overlay|br_netfilter' && sysctl net.ipv4.ip_forward
+   Expected: both modules listed and "net.ipv4.ip_forward = 1"
+
+2.5 Install basic tools
+   sudo apt-get update && sudo apt-get install -y ca-certificates curl gpg apt-transport-https
+
+2.6 Add containerd (Docker) repo
+   sudo install -m 0755 -d /etc/apt/keyrings && sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc && sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+2.7 Install containerd and configure SystemdCgroup
+   sudo apt-get update && sudo apt-get install -y containerd.io
+
+   sudo mkdir -p /etc/containerd && containerd config default | sudo tee /etc/containerd/config.toml > /dev/null && sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+   Verify:
+   grep -n SystemdCgroup /etc/containerd/config.toml
+   Expected: SystemdCgroup = true
+
+2.8 Add Kubernetes repo (v1.36)
+   curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.36/deb/Release.key | sudo gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+   echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.36/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+2.9 Install kubelet, kubeadm, kubectl
+   sudo apt-get update && sudo apt-get install -y kubelet kubeadm kubectl && sudo apt-mark hold kubelet kubeadm kubectl && sudo systemctl enable --now kubelet
+
+   Expected at the end: "kubelet set on hold." "kubeadm set on hold." "kubectl set on hold."
+   Note: kubelet keeps restarting until init/join. This is normal.
+
+2.10 Set the correct pause image and restart containerd
+   PAUSE=$(kubeadm config images list 2>/dev/null | grep pause) && sudo sed -i "s#registry.k8s.io/pause:[0-9.]*#$PAUSE#" /etc/containerd/config.toml && sudo systemctl restart containerd && systemctl is-active containerd
+
+   Expected: active
+   Why: the pause image version changes with the Kubernetes version. Asking kubeadm gives the right one
+   (the old hard-coded "pause:3.9" sed is no longer correct).
+
+2.11 Final check on all nodes
+   hostname && kubeadm version -o short && systemctl is-active containerd
+   Expected: correct hostname, v1.36.x, active
+
+------------------------------------------------------------
+
+STEP 3: EXECUTE ONLY ON THE MASTER NODE
+---------------------------------------
+
+3.1 Initialize the cluster
+   sudo kubeadm init --pod-network-cidr=192.168.0.0/16
+
+   Expected at the end: "Your Kubernetes control-plane has initialized successfully!"
+   Note: 192.168.0.0/16 is Calico's default pod range. It does not overlap the default AWS VPC (172.31.0.0/16).
+
+3.2 Set up kubeconfig
+   mkdir -p $HOME/.kube && sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config && sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+3.3 Verify you are talking to the right cluster
+   kubectl cluster-info
+   Expected: "control plane is running at https://<MASTER-PRIVATE-IP>:6443"
+   If the IP is not the master's IP, init was run on the wrong machine. See CLEANUP below.
+
+   kubectl get nodes
+   Expected: master   NotReady   control-plane   (NotReady until Calico is installed)
+
+3.4 Install network plugin (Calico)
+   kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.33.0/manifests/calico.yaml
+
+   kubectl get pods -n kube-system -w
+   Wait until calico-node, calico-kube-controllers and coredns are Running, then Ctrl+C.
+
+   kubectl get nodes
+   Expected: master   Ready   control-plane
+
+3.5 Generate the join command
+   kubeadm token create --print-join-command
+   Copy the output. The token is valid for 24 hours.
+
+------------------------------------------------------------
+
+STEP 4: EXECUTE ON ALL WORKER NODES
+-----------------------------------
+Do NOT run "kubeadm init" on workers.
+(The old step "sudo kubeadm reset pre-flight checks" is not a valid command and is removed.
+ Use "sudo kubeadm reset -f" only if an earlier join/init attempt was made on this worker.)
+
+4.1 Join the cluster
+   Add sudo at the beginning and the --cri-socket and --v=5 flags at the end:
+
+   sudo kubeadm join <MASTER-PRIVATE-IP>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash> --cri-socket unix:///run/containerd/containerd.sock --v=5
+
+   Example:
+   sudo kubeadm join 172.31.10.100:6443 --token abcdef.0123456789abcdef --discovery-token-ca-cert-hash sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef --cri-socket unix:///run/containerd/containerd.sock --v=5
+
+   Expected at the end: "This node has joined the cluster"
+
+------------------------------------------------------------
+
+STEP 5: VERIFY (ON MASTER NODE)
+-------------------------------
+5.1 Nodes
+   kubectl get nodes -o wide
+
+   Expected:
+   NAME       STATUS   ROLES           INTERNAL-IP
+   master     Ready    control-plane   <master-ip>
+   worker-1   Ready    <none>          <worker1-ip>
+   worker-2   Ready    <none>          <worker2-ip>
+
+   Optional (show "worker" role):
+   kubectl label node worker-1 node-role.kubernetes.io/worker= && kubectl label node worker-2 node-role.kubernetes.io/worker=
+
+5.2 System pods
+   kubectl get pods -n kube-system -o wide
+   Expected: all Running, one calico-node per node.
+
+5.3 Cross-node pod test (proves Calico + Security Group are correct)
+   kubectl create deployment web --image=nginx --replicas=2
+   kubectl get pods -o wide
+   (note the IP of one pod; the two pods should be on different workers)
+   kubectl run test --image=busybox --rm -it --restart=Never -- wget -qO- <pod-IP>
+   Expected: nginx HTML ("Welcome to nginx!")
+
+   Cleanup:
+   kubectl delete deployment web
+
+5.4 Container status on a worker node
+   sudo crictl --runtime-endpoint unix:///run/containerd/containerd.sock ps
+
+------------------------------------------------------------
+
+TROUBLESHOOTING
+---------------
+| Problem                                               | Cause                                         | Fix |
+| ----------------------------------------------------- | --------------------------------------------- | --- |
+| Unable to acquire the dpkg frontend lock              | unattended-upgrades running on new EC2        | Step 2.1 (wait, never delete lock file) |
+| Node name wrong (e.g. master shows as worker-2)       | Hostname set after init/join, or init on wrong machine | CLEANUP below, set hostname, redo |
+| Join: connection refused / timeout on 6443            | SG rule missing, or wrong master IP           | SG "All traffic from same SG"; check kubectl cluster-info on master |
+| Join: kubelet.conf already exists / Port 10250 in use / ca.crt already exists | Worker already joined or init was run on it | sudo kubeadm reset -f, then join again |
+| kubeadm token create: connection refused              | kubeconfig points to a cluster that no longer exists | rm -rf $HOME/.kube and re-copy admin.conf; check cluster-info |
+| Nodes Ready but cross-node pod traffic fails          | IP-in-IP (protocol 4) blocked                 | SG "All traffic from same SG" |
+| coredns Pending                                       | Calico not running yet                        | kubectl get pods -n kube-system |
+| kube-system pods in CrashLoopBackOff                  | SystemdCgroup still false                     | Step 2.7 verify, sudo systemctl restart containerd kubelet |
+| kubeadm init: [ERROR CRI]                             | containerd not running                        | sudo systemctl restart containerd |
+| Token expired                                         | Token lives 24 hours                          | On master: kubeadm token create --print-join-command |
+| reset shows "cni plugin not initialized" errors       | Calico never ran on that node                 | Harmless; remove leftover pods with crictl (CLEANUP step C1) |
+| rm: cannot remove '/run/calico/cgroup/...': Operation not permitted | Calico cgroup is a mounted filesystem | sudo umount /run/calico/cgroup, or just reboot |
+
+------------------------------------------------------------
+
+CLEANUP
+-------
+
+A) Reset a single node (wrong init/join, want to re-join):
+   sudo kubeadm reset -f; sudo crictl --runtime-endpoint unix:///run/containerd/containerd.sock rmp -fa
+   sudo rm -rf /etc/cni/net.d /var/lib/etcd $HOME/.kube
+   sudo iptables -F && sudo iptables -t nat -F && sudo iptables -t mangle -F && sudo iptables -X
+   sudo systemctl restart containerd kubelet
+
+   Then: master -> Step 3 again; worker -> new join command from master (Step 4).
+
+B) Complete cleanup and uninstall (all nodes, then start again from Step 1):
+   C1. sudo kubeadm reset -f; sudo crictl --runtime-endpoint unix:///run/containerd/containerd.sock rmp -fa
+   C2. sudo systemctl stop kubelet containerd
+   C3. sudo apt-mark unhold kubelet kubeadm kubectl && sudo apt-get purge -y kubelet kubeadm kubectl kubernetes-cni cri-tools containerd.io && sudo apt-get autoremove -y
+   C4. sudo umount /run/calico/cgroup 2>/dev/null; sudo rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni /opt/cni /var/lib/cni /run/calico /var/lib/calico /etc/containerd /var/lib/containerd $HOME/.kube /root/.kube
+   C5. sudo rm -f /etc/apt/sources.list.d/kubernetes.list /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/kubernetes-apt-keyring.gpg /etc/apt/keyrings/docker.asc
+   C6. sudo iptables -F && sudo iptables -t nat -F && sudo iptables -t mangle -F && sudo iptables -X
+   C7. sudo ip link delete tunl0 2>/dev/null; sudo ip link delete vxlan.calico 2>/dev/null; echo done
+   C8. sudo reboot
+
+------------------------------------------------------------

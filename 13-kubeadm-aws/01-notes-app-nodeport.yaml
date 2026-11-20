@@ -1,0 +1,66 @@
+# Notes app on the real (kubeadm) cluster, exposed with NodePort 30081 on every node
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: notes-ns
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notes-app
+  namespace: notes-ns
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: notes-app
+  template:
+    metadata:
+      labels:
+        app: notes-app
+    spec:
+      topologySpreadConstraints:          # spread the replicas over the workers
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: notes-app
+      containers:
+      - name: notes-app
+        image: satyamsri/notes-app:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: notes-data
+          mountPath: /data
+      volumes:
+      - name: notes-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notes-svc
+  namespace: notes-ns
+spec:
+  type: NodePort
+  selector:
+    app: notes-app
+  ports:
+  - port: 82
+    targetPort: 80
+    nodePort: 30081

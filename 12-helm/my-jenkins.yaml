@@ -1,0 +1,4 @@
+# Overrides for the jenkins/jenkins chart
+controller:
+  serviceType: NodePort
+  nodePort: 30080
